@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>G-code Dimensioner</title>
+  <style>
+    :root { font-family: system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, 'Helvetica Neue', Arial, 'Noto Sans', 'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol', 'Noto Color Emoji'; }
+    body { margin: 0; padding: 2rem; background: #0b0d10; color: #e8eaed; }
+    .card { max-width: 860px; margin: 0 auto; background: #111418; border: 1px solid #23272d; border-radius: 16px; padding: 24px; box-shadow: 0 10px 30px rgba(0,0,0,0.35); }
+    h1 { margin-top: 0; font-size: 1.6rem; }
+    p.muted { color: #9aa0a6; }
+    .dropzone { border: 2px dashed #39424e; border-radius: 12px; padding: 2rem; text-align: center; cursor: pointer; transition: background 0.2s ease; }
+    .dropzone.dragover { background: #0e151f; }
+    .btn { background: #4c8bf5; color: white; border: 0; border-radius: 10px; padding: 10px 16px; font-weight: 600; cursor: pointer; }
+    .row { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; margin-top: 16px; }
+    .stat { background: #0e1116; border: 1px solid #23272d; border-radius: 12px; padding: 14px; }
+    .label { color: #9aa0a6; font-size: 12px; margin-bottom: 6px; }
+    .value { font-size: 20px; font-weight: 700; }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
+    .hint { font-size: 12px; color: #9aa0a6; margin-top: 12px; }
+    footer { margin-top: 24px; font-size: 12px; color: #9aa0a6; }
+    a { color: #8ab4f8; }
+    input[type=file] { display: none; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>G-code Dimensioner</h1>
+    <p class="muted">Upload a <span class="mono">.gcode</span> (or <span class="mono">.gcode.gz</span>) file and we’ll compute the X, Y, Z size by scanning motion commands.</p>
+
+    <label for="file" id="drop" class="dropzone">
+      <strong>Click to choose</strong> or drag & drop your G-code here
+      <input id="file" type="file" accept=".gcode,.gz,.gcode.gz" />
+    </label>
+
+    <div style="display:flex; gap: 8px; align-items:center; margin-top: 10px;">
+      <button class="btn" id="analyzeBtn">Analyze</button>
+      <span class="hint">We don’t store your files. Everything is processed in-memory on the server.</span>
+    </div>
+
+    <div id="results" style="display:none;">
+      <h2>Result</h2>
+      <div class="row">
+        <div class="stat"><div class="label">X size (mm)</div><div class="value" id="xsize">—</div></div>
+        <div class="stat"><div class="label">Y size (mm)</div><div class="value" id="ysize">—</div></div>
+        <div class="stat"><div class="label">Z size (mm)</div><div class="value" id="zsize">—</div></div>
+      </div>
+      <div class="row">
+        <div class="stat"><div class="label">X min → max</div><div class="value mono" id="xrange">—</div></div>
+        <div class="stat"><div class="label">Y min → max</div><div class="value mono" id="yrange">—</div></div>
+        <div class="stat"><div class="label">Z min → max</div><div class="value mono" id="zrange">—</div></div>
+      </div>
+      <div class="row">
+        <div class="stat"><div class="label">Lines scanned</div><div class="value" id="lines">—</div></div>
+        <div class="stat"><div class="label">Moves found</div><div class="value" id="moves">—</div></div>
+        <div class="stat"><div class="label">Mode</div><div class="value" id="mode">—</div></div>
+      </div>
+      <p class="hint">Note: If your G-code uses relative moves (<span class="mono">G91</span>), we track running position so bounds still compute correctly.</p>
+    </div>
+
+    <div id="error" class="stat" style="display:none; margin-top: 16px;"></div>
+
+    <footer>
+      <p>API: <span class="mono">POST /api/analyze</span> with form field <span class="mono">file</span>. Returns JSON.</p>
+    </footer>
+  </div>
+
+<script>
+const fileInput = document.getElementById('file');
+const drop = document.getElementById('drop');
+const btn = document.getElementById('analyzeBtn');
+const results = document.getElementById('results');
+const errorBox = document.getElementById('error');
+
+drop.addEventListener('dragover', (e) => { e.preventDefault(); drop.classList.add('dragover'); });
+drop.addEventListener('dragleave', () => drop.classList.remove('dragover'));
+drop.addEventListener('drop', (e) => {
+  e.preventDefault();
+  drop.classList.remove('dragover');
+  if (e.dataTransfer.files.length) {
+    fileInput.files = e.dataTransfer.files;
+  }
+});
+
+btn.addEventListener('click', async () => {
+  errorBox.style.display = 'none';
+  results.style.display = 'none';
+
+  if (!fileInput.files.length) {
+    errorBox.textContent = 'Please choose a .gcode or .gcode.gz file.';
+    errorBox.style.display = 'block';
+    return;
+  }
+  const fd = new FormData();
+  fd.append('file', fileInput.files[0]);
+
+  const resp = await fetch('/analyze', { method: 'POST', body: fd });
+  const data = await resp.json();
+  if (!resp.ok || !data.ok) {
+    errorBox.textContent = data.error || 'Analysis failed.';
+    errorBox.style.display = 'block';
+    return;
+  }
+
+  const r = data.result;
+  document.getElementById('xsize').textContent = r.x_size.toFixed(2);
+  document.getElementById('ysize').textContent = r.y_size.toFixed(2);
+  document.getElementById('zsize').textContent = r.z_size.toFixed(2);
+  document.getElementById('xrange').textContent = `${r.x_min.toFixed(3)} → ${r.x_max.toFixed(3)}`;
+  document.getElementById('yrange').textContent = `${r.y_min.toFixed(3)} → ${r.y_max.toFixed(3)}`;
+  document.getElementById('zrange').textContent = `${r.z_min.toFixed(3)} → ${r.z_max.toFixed(3)}`;
+  document.getElementById('lines').textContent = data.line_count;
+  document.getElementById('moves').textContent = data.move_count;
+  document.getElementById('mode').textContent = 'Absolute/Relative aware';
+
+  results.style.display = 'block';
+});
+</script>
+</body>
+</html>
